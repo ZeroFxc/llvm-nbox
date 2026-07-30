@@ -1,0 +1,47 @@
+# —— LLVM源码与参考项目（不入库，体积大） ——
+/llvm-project-llvmorg-22.1.0/
+/refs-rsms-llvmbox/
+/refs-nwdxlgzs-llvm-box/
+
+# —— 构建输出与临时目录 ——
+/build/
+/build-*/
+/out/
+/dist/
+/.tmp/
+/tmp/
+*.log
+
+# —— ccache 缓存 ——
+/.ccache/
+/ccache/
+
+# —— 编译产物 ——
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+*.lib
+*.pdb
+*.ilk
+
+# —— 系统/编辑器 ——
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# —— Python ——
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# -- TRAE IDE --
+.trae/
