@@ -1,0 +1,121 @@
+name: Build llvm-nbox (Android aarch64, arm64-v8a, api 24, clang+lld+binutils unified binary + JNI so)
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build_android_aarch64:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 720
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: install system deps
+        run: |
+          sudo apt-get update && sudo apt-get install -y cmake ninja-build ccache python3 python3-distutils build-essential curl zip unzip p7zip-full file time
+
+      - name: restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: llvmbox-ccache-ubuntu-2204-${{ hashFiles('patches/*.patch', 'build.sh', '.github/workflows/build-android-aarch64.yml') }}-${{ github.sha }}
+          restore-keys: |
+            llvmbox-ccache-ubuntu-2204-${{ hashFiles('patches/*.patch', 'build.sh', '.github/workflows/build-android-aarch64.yml') }}-
+            llvmbox-ccache-ubuntu-2204-
+            llvmbox-ccache-ubuntu-2204
+
+      - name: install NDK r29 linux
+        run: |
+          ndk=android-ndk-r29
+          curl -L -o /tmp/ndk.zip https://dl.google.com/android/repository/android-ndk-r29-linux.zip
+          unzip -q /tmp/ndk.zip -d $HOME
+          ls $HOME/android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/bin/clang
+          echo "NDK=$HOME/android-ndk-r29" >> $GITHUB_ENV
+
+      - name: download LLVM 22.1.0 release tarball
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/llvm-project-llvmorg-22.1.0
+          curl -L --retry 3 -o /tmp/llvm.tar.xz \
+            https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.0/llvm-project-22.1.0.src.tar.xz \
+            || curl -L --retry 3 -o /tmp/llvm.tar.gz \
+              https://github.com/llvm/llvm-project/archive/refs/tags/llvmorg-22.1.0.tar.gz
+          if [ -f /tmp/llvm.tar.xz ]; then
+            tar -xf /tmp/llvm.tar.xz -C /tmp
+            shopt -s dotglob nullglob
+            mv /tmp/llvm-project-22.1.0.src/* $GITHUB_WORKSPACE/llvm-project-llvmorg-22.1.0/
+          else
+            tar -xzf /tmp/llvm.tar.gz -C $GITHUB_WORKSPACE
+          fi
+          ls $GITHUB_WORKSPACE/llvm-project-llvmorg-22.1.0/llvm/CMakeLists.txt
+
+      - name: apply patches
+        run: |
+          bash scripts/apply-patches.sh || { find . -name '*.rej'; exit 1; }
+
+      - name: ccache env
+        run: |
+          export CCACHE_DIR=$HOME/.ccache
+          export CCACHE_SLOPPINESS=pch_defines,time_macros,include_file_mtime,include_file_ctime
+          ccache -M 20G
+          ccache -z
+          echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+          echo "CCACHE_SLOPPINESS=pch_defines,time_macros,include_file_mtime,include_file_ctime" >> $GITHUB_ENV
+
+      - name: full build
+        run: |
+          ./build.sh --ndk $HOME/android-ndk-r29 --llvm-src $GITHUB_WORKSPACE/llvm-project-llvmorg-22.1.0 --build-dir $GITHUB_WORKSPACE/build-android-aarch64 --out-dir $GITHUB_WORKSPACE/out/android-aarch64 --jobs $(nproc)
+
+      - name: ccache report
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/build-android-aarch64/logs
+          ccache -s | tee $GITHUB_WORKSPACE/build-android-aarch64/logs/ccache-summary.log
+
+      - name: artifact stats
+        run: |
+          ls -lhR out/android-aarch64 | head -n 120
+          echo
+          stat -c '%s %n' out/android-aarch64/bin/llvm-nbox out/android-aarch64/lib/arm64-v8a/libllvm-nbox.so out/android-aarch64/README.md
+
+      - name: upload-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llvm-nbox-android-aarch64-${{ github.sha }}
+          path: |
+            llvm-nbox-android-aarch64.zip
+            out/android-aarch64/**
+          retention-days: 90
+
+      - name: release on tag v*
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          sha256sum llvm-nbox-android-aarch64.zip > llvm-nbox-android-aarch64.zip.sha256
+          cat llvm-nbox-android-aarch64.zip.sha256
+      - name: create github release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            llvm-nbox-android-aarch64.zip
+            llvm-nbox-android-aarch64.zip.sha256
+            out/android-aarch64/bin/llvm-nbox
+            out/android-aarch64/lib/arm64-v8a/libllvm-nbox.so
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'pre') || contains(github.ref_name, 'rc') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') }}
