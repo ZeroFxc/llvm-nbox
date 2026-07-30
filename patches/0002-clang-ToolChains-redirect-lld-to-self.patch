@@ -1,0 +1,51 @@
+--- a/clang/lib/Driver/ToolChains/Gnu.cpp
++++ b/clang/lib/Driver/ToolChains/Gnu.cpp
+@@ -581,7 +581,24 @@
+ 
+   Args.addAllArgs(CmdArgs, {options::OPT_T, options::OPT_t});
+ 
+-  const char *Exec = Args.MakeArgString(ToolChain.GetLinkerPath());
++  // lld flavor 自重定向：若链接器为 lld 系列，改为调用自身（llvm-nbox）并注入 flavor 参数
++  std::string _LinkerPath = ToolChain.GetLinkerPath();
++  StringRef LinkerFile = llvm::sys::path::filename(_LinkerPath);
++  bool IsLLD = (LinkerFile == "ld.lld" || LinkerFile == "ld64.lld" ||
++                LinkerFile == "lld" || LinkerFile == "lld-link" ||
++                LinkerFile == "wasm-ld");
++  if (IsLLD) {
++    if (_LinkerPath == D.ClangExecutable) {
++      // 已走自身路径的回溯场景，默认按 ld.lld flavor 注入防止递归死注入
++      CmdArgs.insert(CmdArgs.begin(), Args.MakeArgString(StringRef("ld.lld")));
++      CmdArgs.insert(CmdArgs.begin(), "lld");
++    } else {
++      CmdArgs.insert(CmdArgs.begin(), Args.MakeArgString(LinkerFile));
++      CmdArgs.insert(CmdArgs.begin(), "lld");
++      _LinkerPath = D.ClangExecutable;
++    }
++  }
++  const char *Exec = Args.MakeArgString(_LinkerPath);
+   C.addCommand(std::make_unique<Command>(JA, *this,
+                                          ResponseFileSupport::AtFileCurCP(),
+                                          Exec, CmdArgs, Inputs, Output));
+--- a/clang/lib/Driver/ToolChains/CommonArgs.cpp
++++ b/clang/lib/Driver/ToolChains/CommonArgs.cpp
+@@ -992,7 +992,19 @@
+   const bool IsOSAIX = Triple.isOSAIX();
+   const bool IsAMDGCN = Triple.isAMDGCN();
+   StringRef Linker = Args.getLastArgValue(options::OPT_fuse_ld_EQ);
+-  const char *LinkerPath = Args.MakeArgString(ToolChain.GetLinkerPath());
++  // lld 自重定向：先用局部变量取原始链接器路径，判断是否为 lld 系列
++  std::string _LP = ToolChain.GetLinkerPath();
++  StringRef LPFN = llvm::sys::path::filename(_LP);
++  bool _IsLLD = (LPFN == "ld.lld" || LPFN == "ld64.lld" || LPFN == "lld" ||
++                 LPFN == "lld-link" || LPFN == "wasm-ld");
++  // 当链接器路径指向 lld 系列时，把 Linker 视为对应 flavor，避免走 gold plugin 路径
++  if (_IsLLD && Linker.empty()) {
++    if (LPFN == "lld-link")
++      Linker = "lld-link";
++    else
++      Linker = "lld";
++  }
++  const char *LinkerPath = Args.MakeArgString(_LP);
+   const Driver &D = ToolChain.getDriver();
+   const bool IsFatLTO = Args.hasFlag(options::OPT_ffat_lto_objects,
+                                      options::OPT_fno_fat_lto_objects, false);

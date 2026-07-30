@@ -1,0 +1,11 @@
+--- a/clang/lib/Driver/Job.cpp
++++ b/clang/lib/Driver/Job.cpp
+@@ -410,7 +410,7 @@
+   // FIXME: Currently, if there're more than one job, we disable
+   // -fintegrate-cc1. If we're no longer a integrated-cc1 job, fallback to
+   // out-of-process execution. See discussion in https://reviews.llvm.org/D74447
+-  if (!InProcess)
++  if (false && !InProcess)
+     return Command::Execute(Redirects, ErrMsg, ExecutionFailed);
+ 
+   PrintFileNames();
