@@ -42,6 +42,7 @@ TARGET_TRIPLE="$DEFAULT_TARGET_TRIPLE"
 ABI="$DEFAULT_ABI"
 ANDROID_PLATFORM="$DEFAULT_ANDROID_PLATFORM"
 CLANG_VERSION=""
+LUA_SRC_DIR=""
 
 # ========== 工具链变量（detect_paths 后填充） ==========
 TOOLCHAIN=""
@@ -96,6 +97,10 @@ usage() {
   --abi <ABI>           Android ABI（默认: ${DEFAULT_ABI}）
   --android-platform <N> Android API level（默认: ${DEFAULT_ANDROID_PLATFORM}）
   --clang-version <DIR> clang 版本目录名（默认: 自动探测 build/lib/clang/ 下首项，失败退为 22）
+  --lua-src-dir <DIR>   lxclua 源码根目录（含 src/core/lua.h src/stdlib/lauxlib.h 等）；
+                        传本参数后会编译 src/lua_llvmnbox.cpp.o 并链接进 libllvm-nbox.so，
+                        导出 luaopen_llvm_nbox 符号（require("llvm_nbox") 可用）；
+                        不传则不编译 lua 绑定（默认行为，兼容纯 JNI/CLI 用户）
   -h, --help            显示此帮助信息
 EOF
 }
@@ -158,6 +163,11 @@ parse_args() {
             --clang-version)
                 [[ $# -lt 2 ]] && { echo "错误: --clang-version 需要参数" >&2; exit 1; }
                 CLANG_VERSION="$2"
+                shift 2
+                ;;
+            --lua-src-dir)
+                [[ $# -lt 2 ]] && { echo "错误: --lua-src-dir 需要参数" >&2; exit 1; }
+                LUA_SRC_DIR="$2"
                 shift 2
                 ;;
             -h|--help)
@@ -272,7 +282,18 @@ detect_paths() {
 
     # --- 公共编译选项 ---
     COMMON_FLAGS="--target=$TARGET_WITH_API --sysroot=$TOOLCHAIN/sysroot -std=c++17 -fPIC -fno-exceptions -fno-rtti -ffunction-sections -fdata-sections -Oz -g0 -Wall -Wno-unused-parameter"
-    INC_FLAGS="-I$LLVM_SRC/llvm/include -I$BUILD_DIR/include -I$LLVM_SRC/clang/include -I$BUILD_DIR/tools/clang/include -I$LLVM_SRC/lld/include -I$BUILD_DIR/tools/lld/include -I$BUILD_DIR/tools/llvm-objcopy"
+    INC_FLAGS="-I$LLVM_SRC/llvm/include -I$BUILD_DIR/include -I$LLVM_SRC/clang/include -I$BUILD_DIR/tools/clang/include -I$LLVM_SRC/lld/include -I$BUILD_DIR/tools/lld/include -I$BUILD_DIR/tools/llvm-objcopy -I$ROOT/src"
+    # --- 传 --lua-src-dir 时追加 lxclua 头文件搜索路径 ---
+    if [[ -n "$LUA_SRC_DIR" ]]; then
+        if [[ ! -f "$LUA_SRC_DIR/src/core/lua.h" || ! -f "$LUA_SRC_DIR/src/stdlib/lauxlib.h" ]]; then
+            echo "错误: --lua-src-dir 指向的目录不合法: 找不到 $LUA_SRC_DIR/src/core/lua.h 或 src/stdlib/lauxlib.h" >&2
+            exit 1
+        fi
+        INC_FLAGS="$INC_FLAGS -I$LUA_SRC_DIR/src/core -I$LUA_SRC_DIR/src/stdlib"
+        echo "LUA_SRC_DIR = $LUA_SRC_DIR（将编译 lua_llvmnbox.cpp.o 并导出 luaopen_llvm_nbox）"
+    else
+        echo "LUA_SRC_DIR = <未设置>（不编译 lua_llvmnbox.cpp.o，libllvm-nbox.so 仅含 JNI/CLI）"
+    fi
 
     # --- ccache ---
     if command -v ccache >/dev/null 2>&1; then
@@ -457,7 +478,7 @@ rebuild_driver_objs_fpic_stage() {
 }
 
 # ========== 阶段 6：compile_entry_objs_stage ==========
-# 功能：编译本项目入口 llvm-nbox.cpp + JNI llvm_nbox_jni.cpp 为 .o
+# 功能：编译本项目入口 llvm-nbox.cpp + JNI llvm_nbox_jni.cpp + 可选 lxclua lua_llvmnbox.cpp 为 .o
 # 参数：无
 # 返回值：无
 compile_entry_objs_stage() {
@@ -467,6 +488,8 @@ compile_entry_objs_stage() {
     local entry_obj="${BUILD_DIR}/llvm-nbox.cpp.o"
     local jni_src="${ROOT}/src/jni/llvm_nbox_jni.cpp"
     local jni_obj="${BUILD_DIR}/llvm_nbox_jni.cpp.o"
+    local lua_src="${ROOT}/src/lua_llvmnbox.cpp"
+    local lua_obj="${BUILD_DIR}/lua_llvmnbox.cpp.o"
 
     echo "  [1/2] llvm-nbox.cpp"
     time -p $CLANGXX -c "$entry_src" -o "$entry_obj" $COMMON_FLAGS $INC_FLAGS
@@ -475,6 +498,14 @@ compile_entry_objs_stage() {
     echo "  [2/2] llvm_nbox_jni.cpp"
     time -p $CLANGXX -c "$jni_src" -o "$jni_obj" $COMMON_FLAGS $INC_FLAGS
     echo "     → OK ($(stat -c%s "$jni_obj") bytes)"
+
+    if [[ -n "$LUA_SRC_DIR" ]]; then
+        echo "  [3/3] lua_llvmnbox.cpp（lxclua 绑定）"
+        time -p $CLANGXX -c "$lua_src" -o "$lua_obj" $COMMON_FLAGS $INC_FLAGS
+        echo "     → OK ($(stat -c%s "$lua_obj") bytes)"
+    else
+        echo "  [3/3] lua_llvmnbox.cpp: 跳过（未传 --lua-src-dir）"
+    fi
 
     log_stage_end "compile_entry_objs_stage"
 }
@@ -503,6 +534,9 @@ link_elf_stage() {
         "$BUILD_DIR/tools/llvm-objcopy/CMakeFiles/llvm-objcopy.dir/llvm-objcopy.cpp.o"
         "$BUILD_DIR/tools/llvm-objcopy/CMakeFiles/llvm-objcopy.dir/ObjcopyOptions.cpp.o"
     )
+    if [[ -n "$LUA_SRC_DIR" ]]; then
+        DRIVER_OBJS+=("$BUILD_DIR/lua_llvmnbox.cpp.o")
+    fi
 
     # ALL_LIBS
     local ALL_LIBS
@@ -571,6 +605,9 @@ link_so_stage() {
         "$BUILD_DIR/tools/llvm-objcopy/CMakeFiles/llvm-objcopy.dir/llvm-objcopy.cpp.o"
         "$BUILD_DIR/tools/llvm-objcopy/CMakeFiles/llvm-objcopy.dir/ObjcopyOptions.cpp.o"
     )
+    if [[ -n "$LUA_SRC_DIR" ]]; then
+        DRIVER_OBJS+=("$BUILD_DIR/lua_llvmnbox.cpp.o")
+    fi
 
     local ALL_LIBS
     ALL_LIBS=$(ls -1 "$BUILD_DIR/lib/libclang"*.a "$BUILD_DIR/lib/liblld"*.a "$BUILD_DIR/lib/libLLVM"*.a 2>/dev/null | tr '\n' ' ')

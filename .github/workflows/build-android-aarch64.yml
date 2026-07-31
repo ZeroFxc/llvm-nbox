@@ -79,6 +79,12 @@ jobs:
 
       - name: full build
         run: |
+          # Windows git 克隆到 Linux 时会丢失可执行位，此处显式恢复
+          chmod +x build.sh scripts/apply-patches.sh scripts/build.sh || true
+          ls -la build.sh scripts/apply-patches.sh 2>/dev/null || true
+          # 工作流 runner 上默认 $GITHUB_WORKSPACE 不含 lxclua（仅我们仓库主树）
+          #   → 不传 --lua-src-dir，lua_llvmnbox.cpp 不参与编译；
+          # 若想在 runner 里也出 lua 导出，后续 workflow 自行 actions/checkout lxclua 再传 --lua-src-dir $HOME/lua
           ./build.sh --ndk $HOME/android-ndk-r29 --llvm-src $GITHUB_WORKSPACE/llvm-project-llvmorg-22.1.0 --build-dir $GITHUB_WORKSPACE/build-android-aarch64 --out-dir $GITHUB_WORKSPACE/out/android-aarch64 --jobs $(nproc)
 
       - name: ccache report
