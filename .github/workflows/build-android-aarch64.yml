@@ -82,10 +82,11 @@ jobs:
           # Windows git 克隆到 Linux 时会丢失可执行位，此处显式恢复
           chmod +x build.sh scripts/apply-patches.sh scripts/build.sh || true
           ls -la build.sh scripts/apply-patches.sh 2>/dev/null || true
-          # 工作流 runner 上默认 $GITHUB_WORKSPACE 不含 lxclua（仅我们仓库主树）
-          #   → 不传 --lua-src-dir，lua_llvmnbox.cpp 不参与编译；
-          # 若想在 runner 里也出 lua 导出，后续 workflow 自行 actions/checkout lxclua 再传 --lua-src-dir $HOME/lua
-          ./build.sh --ndk $HOME/android-ndk-r29 --llvm-src $GITHUB_WORKSPACE/llvm-project-llvmorg-22.1.0 --build-dir $GITHUB_WORKSPACE/build-android-aarch64 --out-dir $GITHUB_WORKSPACE/out/android-aarch64 --jobs $(nproc)
+          # --with-lua：编译并链入 src/lua_llvmnbox.cpp.o，导出 luaopen_llvm_nbox / luaopen_llvm-nbox
+          #   无需 lxclua 源码：绑定内部通过 dlsym(RTLD_DEFAULT,...) 拿宿主 Lua C API 函数指针，
+          #   从而 so 的 .dynsym 里不会有 lua_* / luaL_* 未定义符号，解决 Android RTLD_LOCAL
+          #   下 dlopen 报 cannot locate symbol "luaL_checkversion_" 的问题
+          ./build.sh --ndk $HOME/android-ndk-r29 --llvm-src $GITHUB_WORKSPACE/llvm-project-llvmorg-22.1.0 --build-dir $GITHUB_WORKSPACE/build-android-aarch64 --out-dir $GITHUB_WORKSPACE/out/android-aarch64 --jobs $(nproc) --with-lua
 
       - name: ccache report
         run: |
@@ -97,6 +98,26 @@ jobs:
           ls -lhR out/android-aarch64 | head -n 120
           echo
           stat -c '%s %n' out/android-aarch64/bin/llvm-nbox out/android-aarch64/lib/arm64-v8a/libllvm-nbox.so out/android-aarch64/README.md
+
+      - name: validate libllvm-nbox.so dynsym (no lua* / luaL* UND references)
+        run: |
+          set -e
+          SO=out/android-aarch64/lib/arm64-v8a/libllvm-nbox.so
+          echo "--- .dynsym UND entries filtered to lua / luaL ---"
+          $HOME/android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf --dyn-syms "$SO" \
+            | grep -E 'UND\s+lua' || true
+          echo
+          echo "--- count of lua/luaL UND references (must be 0) ---"
+          CNT=$($HOME/android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf --dyn-syms "$SO" \
+            | grep -Ec 'UND\s+lua' || true)
+          echo "UND lua* count = ${CNT}"
+          if [ "${CNT}" -ne 0 ]; then
+            echo "FAIL: libllvm-nbox.so 仍引用 lua_* / luaL_* 外部符号，Android RTLD_LOCAL 下 dlopen 会失败" >&2
+            exit 1
+          fi
+          echo "--- luaopen_* exported symbols (must have at least luaopen_llvm_nbox + luaopen_llvm-nbox) ---"
+          $HOME/android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf --dyn-syms "$SO" \
+            | grep luaopen_ || true
 
       - name: upload-artifact
         uses: actions/upload-artifact@v4
