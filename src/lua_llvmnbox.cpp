@@ -390,16 +390,13 @@ LUA_LLVM_NBOX_EXPORT int luaopen_llvm_nbox(lua_State *L) {
   return 1;  // 模块表一个返回值
 }
 
-// 兼容别名：require("llvm-nbox")(带减号) / require("llvm_nbox")(下划线) 都能找到入口
-//   Lua C 模块搜索器默认把 module 名直接拼到 luaopen_ 后面，不会自动替换 "-" → "_"，
-//   因此必须用内联汇编强行在 .dynsym 放符号名 luaopen_llvm-nbox（含减号）指向同一实现。
-asm(
-  ".globl luaopen_llvm_minus_nbox\n"
-  ".set   luaopen_llvm_minus_nbox, luaopen_llvm_nbox\n"
-  ".globl luaopen_llvm_2dnbox\n"
-  ".set   luaopen_llvm_2dnbox, luaopen_llvm_nbox\n"
-  // 强制导出带减号的符号名（C 标识符不能写减号，用汇编命名）
-  ".globl luaopen_llvm-nbox\n"
-  ".set   luaopen_llvm-nbox, luaopen_llvm_nbox\n"
-);
+// 兼容别名：require("llvm-nbox") 在 Lua 搜索器里会被拼成 luaopen_llvm-nbox，但减号不是
+// 合法 C / 汇编符号名，LLVM IAS 也不支持，因此不生成带减号符号。
+// lxclua 用户必须使用 require("llvm_nbox")（下划线），不要用减号写法。
+// 保留 luaopen_llvm_minus_nbox 和 luaopen_llvm_2dnbox 两个别名，作为兜底（若 lxclua 搜索器
+// 做了特殊转义能命中）。
+LUA_LLVM_NBOX_EXPORT int luaopen_llvm_minus_nbox(lua_State *L)
+    __attribute__((alias("luaopen_llvm_nbox")));
+LUA_LLVM_NBOX_EXPORT int luaopen_llvm_2dnbox(lua_State *L)
+    __attribute__((alias("luaopen_llvm_nbox")));
 

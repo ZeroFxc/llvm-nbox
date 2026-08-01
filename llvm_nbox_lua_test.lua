@@ -1,10 +1,11 @@
 -- =========================================================================================
 -- 功能：lxclua 宿主环境下 require("llvm_nbox") 的烟雾测试脚本
 --
--- 【模块名说明】两种 require 形式都行：
---   1) require("llvm_nbox")        ← 下划线写法（强烈推荐，符合 Lua / LuaRocks 命名规范）
---   2) require("llvm-nbox")        ← 带减号写法（兼容旧 libllvm-nbox.so 被 lxclua 以文件名映射时的场景）
---   内部通过内联汇编在 .dynsym 同时导出 luaopen_llvm_nbox 和 luaopen_llvm-nbox 两个符号。
+-- 【模块名说明】只支持 require("llvm_nbox")（下划线），不要用减号写法。
+--   Lua C 模块搜索器会把 require("llvm-nbox") 拼成 luaopen_llvm-nbox，
+--   但减号不是合法 C / 汇编符号名，无法导出该符号。
+--   内部通过 dlsym(RTLD_DEFAULT, ...) 动态获取宿主 lxclua 的 Lua C API 函数指针，
+--   libllvm-nbox.so 的 .dynsym 中 lua_* / luaL_* UND 计数为 0。
 --
 -- 【Android dlopen 修复】所有 lua_* / luaL_* 调用都走 dlsym(RTLD_DEFAULT, xxx) 函数指针，
 --   libllvm-nbox.so 动态符号表中不再有 lua_* UND 引用，解决 RTLD_LOCAL 下：
@@ -20,11 +21,6 @@
 -- 参数：无（或 arg[1]=libDir arg[2]=resDir 覆盖默认）
 -- 返回值：0 全 OK；os.exit 非 0 某项 FAILED
 -- =========================================================================================
-
--- 先以带减号的名 require 一次（确保别名符号存在），再以标准名下划线拿正式模块
-local _mod_dash = require("llvm-nbox")
-assert(type(_mod_dash) == "table", "require(\"llvm-nbox\") 未返回 table（符号 luaopen_llvm-nbox 可能没导出）")
-print("[TEST_ALIAS] require(\"llvm-nbox\") OK，导出别名符号生效")
 
 local llvm_nbox = require("llvm_nbox")
 print("[TEST_0] require(\"llvm_nbox\") OK")
