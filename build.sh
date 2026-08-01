@@ -97,7 +97,7 @@ usage() {
   --abi <ABI>           Android ABI（默认: ${DEFAULT_ABI}）
   --android-platform <N> Android API level（默认: ${DEFAULT_ANDROID_PLATFORM}）
   --clang-version <DIR> clang 版本目录名（默认: 自动探测 build/lib/clang/ 下首项，失败退为 22）
-  --with-lua            编译 lua/src/lua_llvmnbox.cpp.o 并链入 libllvm-nbox.so（导出 luaopen_llvm_nbox
+  --with-lua            编译 lua/src/lua_llvmnbox.cpp.o 并链入 libllvm_nbox.so（导出 luaopen_llvm_nbox
                         + luaopen_llvm-nbox 两个符号）。lxclua 构建环境 **无需** lxclua 源码/头文件，
                         因绑定内部用 dlsym(RTLD_DEFAULT,...) 取宿主 Lua 函数，没有任何 lua_* UND 依赖。
                         不传本参数时，不编译 lua 绑定（纯 JNI/CLI 构建，和 2024-07 之前默认行为一致）
@@ -286,7 +286,7 @@ detect_paths() {
     if [[ $WITH_LUA -eq 1 ]]; then
         echo "WITH_LUA = 1（将编译 $ROOT/src/lua_llvmnbox.cpp.o，导出 luaopen_llvm_nbox / luaopen_llvm-nbox）"
     else
-        echo "WITH_LUA = 0（不编译 lua_llvmnbox.cpp.o，libllvm-nbox.so 仅含 JNI/CLI）"
+        echo "WITH_LUA = 0（不编译 lua_llvmnbox.cpp.o，libllvm_nbox.so 仅含 JNI/CLI）"
     fi
 
     # --- ccache ---
@@ -577,7 +577,7 @@ link_elf_stage() {
 }
 
 # ========== 阶段 8：link_so_stage ==========
-# 功能：链接 JNI 共享库 libllvm-nbox.so（unstripped → strip-debug → strip-all）
+# 功能：链接 JNI 共享库 libllvm_nbox.so（unstripped → strip-debug → strip-all）
 # 参数：无
 # 返回值：无
 link_so_stage() {
@@ -606,9 +606,9 @@ link_so_stage() {
     local ALL_LIBS
     ALL_LIBS=$(ls -1 "$BUILD_DIR/lib/libclang"*.a "$BUILD_DIR/lib/liblld"*.a "$BUILD_DIR/lib/libLLVM"*.a 2>/dev/null | tr '\n' ' ')
 
-    local so_unstripped="$lib_unstripped_dir/libllvm-nbox.so"
-    local so_debug="$lib_dir/libllvm-nbox.debug"
-    local so_final="$lib_dir/libllvm-nbox.so"
+    local so_unstripped="$lib_unstripped_dir/libllvm_nbox.so"
+    local so_debug="$lib_dir/libllvm_nbox.debug"
+    local so_final="$lib_dir/libllvm_nbox.so"
 
     echo "--- link unstripped SO ---"
     time -p $CLANGXX \
@@ -622,7 +622,7 @@ link_so_stage() {
         -Wl,--exclude-libs,ALL \
         -Wl,--hash-style=gnu \
         -Wl,--build-id=sha1 \
-        -Wl,-soname,libllvm-nbox.so \
+        -Wl,-soname,libllvm_nbox.so \
         -O2 \
         -o "$so_unstripped" \
         "${DRIVER_OBJS[@]}" \
@@ -633,11 +633,11 @@ link_so_stage() {
         -static-libstdc++ -static-libgcc
     echo "link unstripped OK ($(stat -c%s "$so_unstripped") bytes)"
 
-    echo "--- strip-debug → libllvm-nbox.debug ---"
+    echo "--- strip-debug → libllvm_nbox.debug ---"
     time -p $STRIP --strip-debug -o "$so_debug" "$so_unstripped"
     echo "strip-debug OK ($(stat -c%s "$so_debug") bytes)"
 
-    echo "--- strip-all → libllvm-nbox.so ---"
+    echo "--- strip-all → libllvm_nbox.so ---"
     time -p $STRIP --strip-all -o "$so_final" "$so_debug"
     echo "strip-all OK ($(stat -c%s "$so_final") bytes)"
 
@@ -741,8 +741,8 @@ llvm-nbox-android-aarch64/
   │   └─ llvm-nbox.debug        # strip-debug 调试版
   ├─ lib/
   │   └─ arm64-v8a/
-  │       ├─ libllvm-nbox.so    # JNI 共享库 strip-all，APP 放在 jniLibs/arm64-v8a/
-  │       ├─ libllvm-nbox.debug # strip-debug 版
+  │       ├─ libllvm_nbox.so    # JNI 共享库 strip-all，APP 放在 jniLibs/arm64-v8a/
+  │       ├─ libllvm_nbox.debug # strip-debug 版
   │       └─ unstripped/
   ├─ include/
   │   └─ llvm_nbox_jni.h        # JNI 绑定 C 辅助函数声明（APP 自定义 C++ JNI 扩展时 include）
@@ -791,7 +791,7 @@ C
 ## 模式 2：Android APP（JNI）
 \`\`\`
 // java/cn/zero/llvmnbox/LlvmNbox.java 已包含在源码树 java/ 目录
-// 1) jniLibs：把 lib/arm64-v8a/libllvm-nbox.so 拷贝到 app/src/main/jniLibs/arm64-v8a/
+// 1) jniLibs：把 lib/arm64-v8a/libllvm_nbox.so 拷贝到 app/src/main/jniLibs/arm64-v8a/
 // 2) assets：把 resource/ 整体放到 app/src/main/assets/llvm-nbox-res/
 // 3) 启动时解压 assets 到 getFilesDir()/llvm-nbox-res/ 并调用 init()
 static { System.loadLibrary("llvm-nbox"); }

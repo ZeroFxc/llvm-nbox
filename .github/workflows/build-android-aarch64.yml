@@ -97,12 +97,12 @@ jobs:
         run: |
           ls -lhR out/android-aarch64 | head -n 120
           echo
-          stat -c '%s %n' out/android-aarch64/bin/llvm-nbox out/android-aarch64/lib/arm64-v8a/libllvm-nbox.so out/android-aarch64/README.md
+          stat -c '%s %n' out/android-aarch64/bin/llvm-nbox out/android-aarch64/lib/arm64-v8a/libllvm_nbox.so out/android-aarch64/README.md
 
-      - name: validate libllvm-nbox.so dynsym (no lua* / luaL* UND references)
+      - name: validate libllvm_nbox.so dynsym (no lua* / luaL* UND references)
         run: |
           set -e
-          SO=out/android-aarch64/lib/arm64-v8a/libllvm-nbox.so
+          SO=out/android-aarch64/lib/arm64-v8a/libllvm_nbox.so
           echo "--- .dynsym UND entries filtered to lua / luaL ---"
           $HOME/android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf --dyn-syms "$SO" \
             | grep -E 'UND\s+lua' || true
@@ -112,7 +112,7 @@ jobs:
             | grep -Ec 'UND\s+lua' || true)
           echo "UND lua* count = ${CNT}"
           if [ "${CNT}" -ne 0 ]; then
-            echo "FAIL: libllvm-nbox.so 仍引用 lua_* / luaL_* 外部符号，Android RTLD_LOCAL 下 dlopen 会失败" >&2
+            echo "FAIL: libllvm_nbox.so 仍引用 lua_* / luaL_* 外部符号，Android RTLD_LOCAL 下 dlopen 会失败" >&2
             exit 1
           fi
           echo "--- luaopen_* exported symbols (must have at least luaopen_llvm_nbox + luaopen_llvm-nbox) ---"
@@ -141,7 +141,7 @@ jobs:
             llvm-nbox-android-aarch64.zip
             llvm-nbox-android-aarch64.zip.sha256
             out/android-aarch64/bin/llvm-nbox
-            out/android-aarch64/lib/arm64-v8a/libllvm-nbox.so
+            out/android-aarch64/lib/arm64-v8a/libllvm_nbox.so
           generate_release_notes: true
           fail_on_unmatched_files: true
           draft: false
